@@ -227,4 +227,6 @@ export type TransformationResult = {
   nextAction: string;
   nextActionDetail: string;
   libraryDestination: string;
+  savedToLibrary?: boolean;
+  createdAt?: string;
 };

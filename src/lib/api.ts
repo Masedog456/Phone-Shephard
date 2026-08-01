@@ -82,6 +82,24 @@ export async function createTransformation(capture: CapturedContent, action: Cap
   return data.transformation;
 }
 
+export async function fetchTransformation(id: string): Promise<TransformationResult | null> {
+  if (isDemoMode && !isSupabaseConfigured) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("transformations")
+    .select("id, title, summary, output_json, saved_to_library, created_at")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data ? mapTransformation(data) : null;
+}
+
 export async function fetchLibraryItems(): Promise<LibraryItem[]> {
   if (isDemoMode && !isSupabaseConfigured) {
     return [];
@@ -145,6 +163,35 @@ export async function submitTransformationFeedback(id: string, rating: "useful" 
   if (isDemoMode && !isSupabaseConfigured) return;
   const { error } = await supabase.from("transformation_feedback").upsert({ transformation_id: id, rating }, { onConflict: "user_id,transformation_id" });
   if (error) throw new Error(error.message);
+}
+
+type TransformationRow = {
+  id: string;
+  title: string;
+  summary: string;
+  output_json: Partial<TransformationResult> | null;
+  saved_to_library: boolean;
+  created_at: string;
+};
+
+function mapTransformation(row: TransformationRow): TransformationResult {
+  const output = row.output_json ?? {};
+  return {
+    id: row.id,
+    eyebrow: output.eyebrow ?? "Shepherd created",
+    title: output.title ?? row.title,
+    summary: output.summary ?? row.summary,
+    sources: Array.isArray(output.sources) ? output.sources : [],
+    outputLabel: output.outputLabel ?? "Created for you",
+    outputTitle: output.outputTitle ?? row.title,
+    outputDescription: output.outputDescription ?? row.summary,
+    sections: Array.isArray(output.sections) ? output.sections : [],
+    nextAction: output.nextAction ?? "Save this so it is easy to find later.",
+    nextActionDetail: output.nextActionDetail ?? "Shepherd will keep the context attached in your Library.",
+    libraryDestination: output.libraryDestination ?? "Library",
+    savedToLibrary: row.saved_to_library,
+    createdAt: row.created_at
+  };
 }
 
 function localAnalyzeAsset(asset: ShepherdAsset): ShepherdAsset {

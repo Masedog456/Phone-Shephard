@@ -19,29 +19,63 @@ export function TransformationResultView({
   onFeedback?: (id: string, rating: Feedback) => void | Promise<void>;
 }) {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const [savedAction, setSavedAction] = useState<SavedAction>(null);
+  const [savedAction, setSavedAction] = useState<SavedAction>(result.savedToLibrary ? "library" : null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isReminderSaving, setIsReminderSaving] = useState(false);
+  const [isFeedbackSaving, setIsFeedbackSaving] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const reveal = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.spring(reveal, { toValue: 1, friction: 8, tension: 45, useNativeDriver: true }).start();
   }, [reveal]);
 
-  function chooseFeedback(value: Feedback) {
-    setFeedback(value);
-    Vibration.vibrate(6);
-    void onFeedback?.(result.id, value);
+  useEffect(() => {
+    if (result.savedToLibrary) {
+      setSavedAction("library");
+    }
+  }, [result.savedToLibrary]);
+
+  async function chooseFeedback(value: Feedback) {
+    setActionError(null);
+    setIsFeedbackSaving(true);
+    try {
+      await onFeedback?.(result.id, value);
+      setFeedback(value);
+      Vibration.vibrate(6);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Shepherd could not save that feedback yet.");
+    } finally {
+      setIsFeedbackSaving(false);
+    }
   }
 
-  function saveToLibrary() {
-    setSavedAction("library");
-    Vibration.vibrate(8);
-    void onSave?.(result.id);
+  async function saveToLibrary() {
+    setActionError(null);
+    setIsSaving(true);
+    try {
+      await onSave?.(result.id);
+      setSavedAction("library");
+      Vibration.vibrate(8);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Shepherd could not save this to your Library yet.");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
-  function addReminder() {
-    setSavedAction("reminder");
-    Vibration.vibrate(8);
-    void onReminder?.(result.id, result.nextAction);
+  async function addReminder() {
+    setActionError(null);
+    setIsReminderSaving(true);
+    try {
+      await onReminder?.(result.id, result.nextAction);
+      setSavedAction("reminder");
+      Vibration.vibrate(8);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Shepherd could not set that reminder yet.");
+    } finally {
+      setIsReminderSaving(false);
+    }
   }
 
   async function shareResult() {
@@ -113,14 +147,16 @@ export function TransformationResultView({
         </View>
       ) : null}
 
-      <Pressable style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]} onPress={saveToLibrary}>
+      {actionError ? <Text style={styles.actionError}>{actionError}</Text> : null}
+
+      <Pressable style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed, isSaving && styles.disabled]} disabled={isSaving} onPress={saveToLibrary}>
         <Bookmark color={colors.cream} size={20} />
-        <Text style={styles.primaryText}>Save to Library</Text>
+        <Text style={styles.primaryText}>{isSaving ? "Saving gently..." : savedAction === "library" ? "Saved to Library" : "Save to Library"}</Text>
       </Pressable>
       <View style={styles.actionRow}>
-        <Pressable style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]} onPress={addReminder}>
+        <Pressable style={({ pressed }) => [styles.actionButton, pressed && styles.pressed, isReminderSaving && styles.disabled]} disabled={isReminderSaving} onPress={addReminder}>
           <Bell color={colors.ink} size={19} />
-          <Text style={styles.actionText}>Remind me</Text>
+          <Text style={styles.actionText}>{isReminderSaving ? "Setting..." : "Remind me"}</Text>
         </Pressable>
         <Pressable style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]} onPress={shareResult}>
           <Share2 color={colors.ink} size={19} />
@@ -132,9 +168,9 @@ export function TransformationResultView({
         <Text style={styles.feedbackKicker}>Teach Shepherd</Text>
         <Text style={styles.feedbackQuestion}>Did I understand what mattered?</Text>
         <View style={styles.feedbackRow}>
-          <FeedbackButton icon={<ThumbsUp color={feedback === "useful" ? colors.cream : colors.ink} size={17} />} label="Useful" active={feedback === "useful"} onPress={() => chooseFeedback("useful")} />
-          <FeedbackButton icon={<ThumbsDown color={feedback === "not_useful" ? colors.cream : colors.ink} size={17} />} label="Not useful" active={feedback === "not_useful"} onPress={() => chooseFeedback("not_useful")} />
-          <FeedbackButton icon={<Tags color={feedback === "wrong_category" ? colors.cream : colors.ink} size={17} />} label="Wrong category" active={feedback === "wrong_category"} onPress={() => chooseFeedback("wrong_category")} />
+          <FeedbackButton icon={<ThumbsUp color={feedback === "useful" ? colors.cream : colors.ink} size={17} />} label="Useful" active={feedback === "useful"} disabled={isFeedbackSaving} onPress={() => void chooseFeedback("useful")} />
+          <FeedbackButton icon={<ThumbsDown color={feedback === "not_useful" ? colors.cream : colors.ink} size={17} />} label="Not useful" active={feedback === "not_useful"} disabled={isFeedbackSaving} onPress={() => void chooseFeedback("not_useful")} />
+          <FeedbackButton icon={<Tags color={feedback === "wrong_category" ? colors.cream : colors.ink} size={17} />} label="Wrong category" active={feedback === "wrong_category"} disabled={isFeedbackSaving} onPress={() => void chooseFeedback("wrong_category")} />
         </View>
         {feedback ? <Text style={styles.feedbackThanks}>Thank you. I will carry that forward.</Text> : null}
       </View>
@@ -142,9 +178,9 @@ export function TransformationResultView({
   );
 }
 
-function FeedbackButton({ icon, label, active, onPress }: { icon: React.ReactNode; label: string; active: boolean; onPress: () => void }) {
+function FeedbackButton({ icon, label, active, disabled, onPress }: { icon: React.ReactNode; label: string; active: boolean; disabled?: boolean; onPress: () => void }) {
   return (
-    <Pressable style={[styles.feedbackButton, active && styles.feedbackButtonActive]} onPress={onPress}>
+    <Pressable style={[styles.feedbackButton, active && styles.feedbackButtonActive, disabled && styles.disabled]} disabled={disabled} onPress={onPress}>
       {icon}<Text style={[styles.feedbackText, active && styles.feedbackTextActive]}>{label}</Text>
     </Pressable>
   );
@@ -191,6 +227,8 @@ const styles = StyleSheet.create({
   actionButton: { flex: 1, minHeight: 54, borderRadius: radii.xl, backgroundColor: colors.card, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, ...shadows.quiet },
   actionText: { ...typography.button, color: colors.ink },
   pressed: { opacity: 0.86, transform: [{ scale: 0.99 }] },
+  disabled: { opacity: 0.68 },
+  actionError: { ...typography.bodySmall, color: colors.warning },
   feedbackCard: { borderRadius: radii.xl, backgroundColor: colors.cardSoft, padding: spacing.lg, gap: spacing.md },
   feedbackKicker: { ...typography.label, color: colors.sage },
   feedbackQuestion: { ...typography.cardTitle, color: colors.ink },
