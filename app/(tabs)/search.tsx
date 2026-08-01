@@ -6,12 +6,16 @@ import { LibraryItemCard } from "@/components/LibraryItemCard";
 import { Screen } from "@/components/Screen";
 import { askMemory, memoryPrompts, MemoryAnswer } from "@/features/memory/askMemory";
 import { useLibraryItems } from "@/features/library/useLibraryItems";
+import { askMemoryRemote } from "@/lib/api";
+import { isDemoMode, isSupabaseConfigured } from "@/lib/supabase";
 import { colors, radii, shadows, spacing, typography } from "@/lib/theme";
 
 export default function AskYourMemoryScreen() {
   const [draft, setDraft] = useState("");
   const { items, isLoading, error, refresh } = useLibraryItems();
   const [answer, setAnswer] = useState<MemoryAnswer>(() => askMemory("", []));
+  const [isAnswering, setIsAnswering] = useState(false);
+  const [answerError, setAnswerError] = useState<string | null>(null);
 
   useEffect(() => {
     refresh();
@@ -26,13 +30,34 @@ export default function AskYourMemoryScreen() {
     [answer.relatedItemIds, items]
   );
 
-  function submit(question = draft) {
+  async function submit(question = draft) {
     const trimmed = question.trim();
     if (!trimmed) {
       return;
     }
+
     setDraft(trimmed);
-    setAnswer(askMemory(trimmed, items));
+    setAnswerError(null);
+
+    if (isDemoMode && !isSupabaseConfigured) {
+      setAnswer(askMemory(trimmed, items));
+      return;
+    }
+
+    setIsAnswering(true);
+    try {
+      const remoteAnswer = await askMemoryRemote(trimmed);
+      setAnswer(remoteAnswer);
+    } catch (remoteError) {
+      setAnswer(askMemory(trimmed, items));
+      setAnswerError(
+        remoteError instanceof Error
+          ? `I answered from your local Library while the AI memory service recovers: ${remoteError.message}`
+          : "I answered from your local Library while the AI memory service recovers."
+      );
+    } finally {
+      setIsAnswering(false);
+    }
   }
 
   return (
@@ -79,7 +104,8 @@ export default function AskYourMemoryScreen() {
             <Sparkles color={colors.sage} size={18} />
             <Text style={styles.bubbleKicker}>Shepherd</Text>
           </View>
-          <Text style={styles.answerText}>{answer.response}</Text>
+          <Text style={styles.answerText}>{isAnswering ? "I am looking through your private Library..." : answer.response}</Text>
+          {answerError ? <Text style={styles.answerNote}>{answerError}</Text> : null}
         </View>
       </View>
 
@@ -245,6 +271,10 @@ const styles = StyleSheet.create({
   answerText: {
     ...typography.body,
     color: colors.ink
+  },
+  answerNote: {
+    ...typography.bodySmall,
+    color: colors.muted
   },
   section: {
     marginTop: spacing.xl,

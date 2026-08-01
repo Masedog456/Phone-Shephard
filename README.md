@@ -40,6 +40,7 @@ supabase secrets set OPENAI_API_KEY=sk-proj-your-key
 supabase secrets set OPENAI_VISION_MODEL=gpt-4.1-mini
 supabase secrets set OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 supabase secrets set OPENAI_TRANSFORMATION_MODEL=gpt-4.1-mini
+supabase secrets set OPENAI_MEMORY_MODEL=gpt-4.1-mini
 ```
 
 Deploy:
@@ -51,6 +52,7 @@ supabase functions deploy apply-action
 supabase functions deploy weekly-summary
 supabase functions deploy delete-analysis
 supabase functions deploy transform-capture
+supabase functions deploy ask-memory
 ```
 
 ## Privacy model

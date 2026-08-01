@@ -1,5 +1,6 @@
 ﻿import { supabase } from "@/lib/supabase";
 import { isDemoMode, isSupabaseConfigured } from "@/lib/supabase";
+import type { MemoryAnswer } from "@/features/memory/askMemory";
 import { CaptureAction, CapturedContent, LibraryCategory, LibraryItem, ShepherdAsset, TransformationResult } from "@/types/domain";
 import * as FileSystem from "expo-file-system";
 import * as ImageManipulator from "expo-image-manipulator";
@@ -109,6 +110,22 @@ export async function fetchLibraryItems(): Promise<LibraryItem[]> {
     capturedAt: item.captured_at,
     keywords: item.keywords ?? []
   }));
+}
+
+export async function askMemoryRemote(question: string): Promise<MemoryAnswer> {
+  if (isDemoMode && !isSupabaseConfigured) {
+    throw new Error("Remote memory is not available in demo mode.");
+  }
+
+  const { data, error } = await supabase.functions.invoke<{ answer: MemoryAnswer }>("ask-memory", {
+    body: { question }
+  });
+
+  if (error || !data?.answer) {
+    throw new Error(error?.message ?? "Shepherd could not ask your memory yet.");
+  }
+
+  return data.answer;
 }
 
 export async function saveTransformation(id: string) {
