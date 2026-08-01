@@ -1,0 +1,27 @@
+project_id = "phone-shepherd"
+
+[api]
+enabled = true
+
+[auth]
+enabled = true
+site_url = "phoneshepherd://"
+additional_redirect_urls = ["phoneshepherd://", "exp://127.0.0.1:8081"]
+
+[storage]
+enabled = true
+
+[functions.analyze-assets]
+verify_jwt = true
+
+[functions.search-assets]
+verify_jwt = true
+
+[functions.apply-action]
+verify_jwt = true
+
+[functions.weekly-summary]
+verify_jwt = true
+
+[functions.delete-analysis]
+verify_jwt = true

@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "Phone Shepherd",
+    "slug": "phone-shepherd",
+    "scheme": "phoneshepherd",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#F7F3EA",
+      "resizeMode": "contain"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.phoneshepherd.mobile",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Phone Shepherd scans selected photos and screenshots so you can organize, search, and clean your library.",
+        "NSPhotoLibraryAddUsageDescription": "Phone Shepherd may update your library only after you approve an action."
+      }
+    },
+    "android": {
+      "package": "app.phoneshepherd.mobile",
+      "permissions": [
+        "READ_MEDIA_IMAGES",
+        "READ_EXTERNAL_STORAGE"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Phone Shepherd scans selected photos and screenshots so you can organize, search, and clean your library.",
+          "savePhotosPermission": "Phone Shepherd may update your library only after you approve an action.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ]
+    ],
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "replace-with-eas-project-id"
+      }
+    }
+  }
+}
