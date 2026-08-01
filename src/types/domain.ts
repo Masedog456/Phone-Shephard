@@ -145,6 +145,7 @@ export type LibraryCategory =
 export type LibraryItem = {
   id: string;
   source: string;
+  contentType?: string;
   type: string;
   title: string;
   aiSummary: string;
@@ -153,7 +154,18 @@ export type LibraryItem = {
   category: LibraryCategory;
   collection: string;
   creator?: string;
+  sourceUrl?: string;
   capturedAt: string;
+  keywords: string[];
+  status?: "active" | "archived";
+};
+
+export type LibraryItemUpdate = {
+  title: string;
+  aiSummary: string;
+  whySaved: string;
+  category: LibraryCategory;
+  collection: string;
   keywords: string[];
 };
 

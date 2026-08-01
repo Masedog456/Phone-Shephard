@@ -1,7 +1,7 @@
 ﻿import { supabase } from "@/lib/supabase";
 import { isDemoMode, isSupabaseConfigured } from "@/lib/supabase";
 import type { MemoryAnswer } from "@/features/memory/askMemory";
-import { CaptureAction, CapturedContent, LibraryCategory, LibraryItem, ShepherdAsset, TransformationResult } from "@/types/domain";
+import { CaptureAction, CapturedContent, LibraryCategory, LibraryItem, LibraryItemUpdate, ShepherdAsset, TransformationResult } from "@/types/domain";
 import * as FileSystem from "expo-file-system";
 import * as ImageManipulator from "expo-image-manipulator";
 
@@ -82,6 +82,10 @@ export async function createTransformation(capture: CapturedContent, action: Cap
   return data.transformation;
 }
 
+export async function createTransformationFromLibraryItem(item: LibraryItem, action: CaptureAction = "create_action_item") {
+  return createTransformation(libraryItemToCapture(item), action);
+}
+
 export async function fetchTransformation(id: string): Promise<TransformationResult | null> {
   if (isDemoMode && !isSupabaseConfigured) {
     return null;
@@ -107,7 +111,7 @@ export async function fetchLibraryItems(): Promise<LibraryItem[]> {
 
   const { data, error } = await supabase
     .from("library_items")
-    .select("id, source, content_type, title, creator, summary, why_saved, category, collection_name, keywords, captured_at")
+    .select("id, source, content_type, title, creator, source_url, summary, why_saved, category, collection_name, keywords, captured_at, status")
     .order("captured_at", { ascending: false });
 
   if (error) {
@@ -117,6 +121,7 @@ export async function fetchLibraryItems(): Promise<LibraryItem[]> {
   return (data ?? []).map((item) => ({
     id: item.id,
     source: item.source,
+    contentType: item.content_type,
     type: humanizeContentType(item.content_type),
     title: item.title,
     aiSummary: item.summary || "Shepherd saved this with its context intact.",
@@ -125,9 +130,36 @@ export async function fetchLibraryItems(): Promise<LibraryItem[]> {
     category: normalizeLibraryCategory(item.category),
     collection: item.collection_name || "Captured by Shepherd",
     creator: item.creator ?? undefined,
+    sourceUrl: item.source_url ?? undefined,
     capturedAt: item.captured_at,
-    keywords: item.keywords ?? []
+    keywords: item.keywords ?? [],
+    status: item.status === "archived" ? "archived" : "active"
   }));
+}
+
+export async function updateLibraryItem(id: string, update: LibraryItemUpdate): Promise<void> {
+  if (isDemoMode && !isSupabaseConfigured) return;
+  const { error } = await supabase
+    .from("library_items")
+    .update({
+      title: update.title,
+      summary: update.aiSummary,
+      why_saved: update.whySaved,
+      category: update.category,
+      collection_name: update.collection,
+      keywords: update.keywords
+    })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function archiveLibraryItem(id: string, archived: boolean): Promise<void> {
+  if (isDemoMode && !isSupabaseConfigured) return;
+  const { error } = await supabase
+    .from("library_items")
+    .update({ status: archived ? "archived" : "active" })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
 }
 
 export async function askMemoryRemote(question: string): Promise<MemoryAnswer> {
@@ -192,6 +224,73 @@ function mapTransformation(row: TransformationRow): TransformationResult {
     savedToLibrary: row.saved_to_library,
     createdAt: row.created_at
   };
+}
+
+function libraryItemToCapture(item: LibraryItem): CapturedContent {
+  return {
+    id: `library-${item.id}-${Date.now()}`,
+    title: item.title,
+    source: "documents",
+    sourceLabel: item.source,
+    creator: item.creator,
+    link: item.sourceUrl,
+    capturedAt: item.capturedAt,
+    contentType: captureContentTypeFromLibraryItem(item),
+    summary: item.aiSummary,
+    keywords: item.keywords.length ? item.keywords : [item.category.replace("_", " ")],
+    suggestedShepherd: shepherdNameForCategory(item.category),
+    suggestedShepherdId: shepherdIdForCategory(item.category),
+    preview: `I found "${item.title}" in your Library and can turn it into a calmer next step.`,
+    recommendedAction: "create_action_item"
+  };
+}
+
+function captureContentTypeFromLibraryItem(item: LibraryItem): CapturedContent["contentType"] {
+  const type = (item.contentType ?? item.type).toLowerCase();
+  if (type.includes("video")) return "video";
+  if (type.includes("pdf")) return "pdf";
+  if (type.includes("photo") || type.includes("screenshot")) return "photo";
+  if (type.includes("voice")) return "voice_note";
+  if (type.includes("post")) return "social_post";
+  if (type.includes("pin")) return "pin";
+  if (type.includes("website")) return "website";
+  return "document";
+}
+
+function shepherdNameForCategory(category: LibraryCategory) {
+  switch (category) {
+    case "recipes":
+      return "Recipe Shepherd";
+    case "business_ideas":
+      return "Idea Shepherd";
+    case "fitness":
+      return "Fitness Shepherd";
+    case "travel":
+      return "Travel Shepherd";
+    case "wisdom":
+      return "Wisdom Shepherd";
+    case "finance":
+      return "Receipt Shepherd";
+    case "family":
+      return "Memory Shepherd";
+    default:
+      return "Research Shepherd";
+  }
+}
+
+function shepherdIdForCategory(category: LibraryCategory) {
+  switch (category) {
+    case "recipes":
+      return "task-screenshots-recipes";
+    case "business_ideas":
+      return "task-notes-ideas";
+    case "fitness":
+      return "task-posts-fitness";
+    case "finance":
+      return "task-receipts-month";
+    default:
+      return "task-links-unopened";
+  }
 }
 
 function localAnalyzeAsset(asset: ShepherdAsset): ShepherdAsset {

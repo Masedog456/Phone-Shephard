@@ -13,6 +13,7 @@ type LibraryItem = {
   collection_name?: string | null;
   keywords?: string[] | null;
   captured_at: string;
+  status?: string | null;
 };
 
 type MemoryIntent = {
@@ -49,7 +50,8 @@ Deno.serve(async (req) => {
 
     const { data: items, error } = await userClient
       .from("library_items")
-      .select("id, source, content_type, title, creator, summary, why_saved, category, collection_name, keywords, captured_at")
+      .select("id, source, content_type, title, creator, summary, why_saved, category, collection_name, keywords, captured_at, status")
+      .eq("status", "active")
       .order("captured_at", { ascending: false })
       .limit(200);
 

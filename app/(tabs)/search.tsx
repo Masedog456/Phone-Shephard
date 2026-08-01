@@ -16,18 +16,19 @@ export default function AskYourMemoryScreen() {
   const [answer, setAnswer] = useState<MemoryAnswer>(() => askMemory("", []));
   const [isAnswering, setIsAnswering] = useState(false);
   const [answerError, setAnswerError] = useState<string | null>(null);
+  const searchableItems = useMemo(() => items.filter((item) => item.status !== "archived"), [items]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   useEffect(() => {
-    setAnswer((current) => askMemory(current.question === "What can I ask?" ? "" : current.question, items));
-  }, [items]);
+    setAnswer((current) => askMemory(current.question === "What can I ask?" ? "" : current.question, searchableItems));
+  }, [searchableItems]);
 
   const relatedItems = useMemo(
-    () => answer.relatedItemIds.map((id) => items.find((item) => item.id === id)).filter(Boolean),
-    [answer.relatedItemIds, items]
+    () => answer.relatedItemIds.map((id) => searchableItems.find((item) => item.id === id)).filter(Boolean),
+    [answer.relatedItemIds, searchableItems]
   );
 
   async function submit(question = draft) {
@@ -40,7 +41,7 @@ export default function AskYourMemoryScreen() {
     setAnswerError(null);
 
     if (isDemoMode && !isSupabaseConfigured) {
-      setAnswer(askMemory(trimmed, items));
+      setAnswer(askMemory(trimmed, searchableItems));
       return;
     }
 
@@ -49,7 +50,7 @@ export default function AskYourMemoryScreen() {
       const remoteAnswer = await askMemoryRemote(trimmed);
       setAnswer(remoteAnswer);
     } catch (remoteError) {
-      setAnswer(askMemory(trimmed, items));
+      setAnswer(askMemory(trimmed, searchableItems));
       setAnswerError(
         remoteError instanceof Error
           ? `I answered from your local Library while the AI memory service recovers: ${remoteError.message}`
@@ -137,9 +138,9 @@ export default function AskYourMemoryScreen() {
           ) : (
             <View style={styles.emptyCard}>
               <Sparkles color={colors.sage} size={24} />
-              <Text style={styles.emptyTitle}>{items.length ? "Try asking another way." : "Your memory is ready for its first saved thing."}</Text>
+              <Text style={styles.emptyTitle}>{searchableItems.length ? "Try asking another way." : "Your memory is ready for its first saved thing."}</Text>
               <Text style={styles.emptyBody}>
-                {items.length
+                {searchableItems.length
                   ? "Shepherd understands recipes, trips, ideas, quotes, people, sources, and themes."
                   : "Capture a link, idea, recipe, quote, or document first. Then Shepherd can find it here by meaning."}
               </Text>

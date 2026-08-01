@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, Vibration, View } from "react-native";
 import { Archive, BookOpen, Brain, ChevronRight, Film, Search, Sparkles } from "lucide-react-native";
 import { EmptyState } from "@/components/EmptyState";
 import { IntentActionCard } from "@/components/IntentActionCard";
@@ -14,7 +14,8 @@ import {
   libraryCategories,
 } from "@/features/library/mockLibrary";
 import { useLibraryItems } from "@/features/library/useLibraryItems";
-import { LibraryCategory } from "@/types/domain";
+import { createTransformationFromLibraryItem } from "@/lib/api";
+import { LibraryCategory, LibraryItem, LibraryItemUpdate } from "@/types/domain";
 import { colors, radii, shadows, spacing, typography } from "@/lib/theme";
 
 type Filter = "all" | LibraryCategory;
@@ -23,7 +24,10 @@ export default function LibraryScreen() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [collection, setCollection] = useState("All");
-  const { items, isLoading, error, refresh } = useLibraryItems();
+  const [showArchived, setShowArchived] = useState(false);
+  const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
+  const { items, isLoading, error, refresh, updateItem, archiveItem } = useLibraryItems();
+  const [transformingItemId, setTransformingItemId] = useState<string | null>(null);
 
   useEffect(() => {
     refresh();
@@ -43,6 +47,7 @@ export default function LibraryScreen() {
   const filteredItems = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return items.filter((item) => {
+      const matchesStatus = showArchived ? item.status === "archived" : item.status !== "archived";
       const matchesFilter = filter === "all" || item.category === filter;
       const matchesCollection = collection === "All" || item.collection === collection;
       const haystack = [
@@ -59,9 +64,45 @@ export default function LibraryScreen() {
         .join(" ")
         .toLowerCase();
       const matchesQuery = !normalizedQuery || haystack.includes(normalizedQuery);
-      return matchesFilter && matchesCollection && matchesQuery;
+      return matchesStatus && matchesFilter && matchesCollection && matchesQuery;
     });
-  }, [collection, filter, items, query]);
+  }, [collection, filter, items, query, showArchived]);
+
+  const activeCount = items.filter((item) => item.status !== "archived").length;
+  const archivedCount = items.filter((item) => item.status === "archived").length;
+
+  async function handleUpdateItem(id: string, update: LibraryItemUpdate) {
+    try {
+      await updateItem(id, update);
+      setEditingItem(null);
+      Vibration.vibrate(6);
+    } catch (saveError) {
+      Alert.alert("Shepherd could not save that yet", saveError instanceof Error ? saveError.message : "Try again in a moment.");
+    }
+  }
+
+  async function handleArchiveItem(item: LibraryItem) {
+    const archived = item.status !== "archived";
+    try {
+      await archiveItem(item.id, archived);
+      Vibration.vibrate(6);
+    } catch (archiveError) {
+      Alert.alert("Nothing changed", archiveError instanceof Error ? archiveError.message : "Try again in a moment.");
+    }
+  }
+
+  async function handleTransformItem(item: LibraryItem) {
+    setTransformingItemId(item.id);
+    try {
+      const result = await createTransformationFromLibraryItem(item);
+      Vibration.vibrate(8);
+      router.push(`/transformation/${result.id}`);
+    } catch (transformError) {
+      Alert.alert("Shepherd needs another moment", transformError instanceof Error ? transformError.message : "This saved thing could not be transformed yet.");
+    } finally {
+      setTransformingItemId(null);
+    }
+  }
 
   return (
     <Screen scroll>
@@ -165,6 +206,12 @@ export default function LibraryScreen() {
         ))}
       </ScrollView>
 
+      <Text style={styles.sectionTitle}>Library status</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+        <LibraryFilterChip label={`Active ${activeCount}`} selected={!showArchived} onPress={() => setShowArchived(false)} />
+        <LibraryFilterChip label={`Archived ${archivedCount}`} selected={showArchived} onPress={() => setShowArchived(true)} />
+      </ScrollView>
+
       <Pressable style={styles.timelineCard} onPress={() => router.push("/timeline")}>
         <View style={styles.dotsIcon}>
           <Film color={colors.blue} size={23} />
@@ -204,7 +251,18 @@ export default function LibraryScreen() {
             examples={["Check sign-in", "Refresh", "Try again"]}
           />
         ) : filteredItems.length ? (
-          filteredItems.map((item) => <LibraryItemCard key={item.id} item={item} />)
+          filteredItems.map((item) => (
+            <LibraryItemCard
+              key={item.id}
+              item={{
+                ...item,
+                suggestedAction: transformingItemId === item.id ? "Shepherd is creating a useful next step..." : item.suggestedAction
+              }}
+              onEdit={() => setEditingItem(item)}
+              onArchive={() => void handleArchiveItem(item)}
+              onTransform={() => void handleTransformItem(item)}
+            />
+          ))
         ) : (
           <Pressable onPress={() => router.push("/capture")}>
             <EmptyState
@@ -215,7 +273,91 @@ export default function LibraryScreen() {
           </Pressable>
         )}
       </View>
+
+      <EditLibraryItemModal
+        item={editingItem}
+        onClose={() => setEditingItem(null)}
+        onSave={(id, update) => void handleUpdateItem(id, update)}
+      />
     </Screen>
+  );
+}
+
+function EditLibraryItemModal({
+  item,
+  onClose,
+  onSave
+}: {
+  item: LibraryItem | null;
+  onClose: () => void;
+  onSave: (id: string, update: LibraryItemUpdate) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [summary, setSummary] = useState("");
+  const [whySaved, setWhySaved] = useState("");
+  const [category, setCategory] = useState<LibraryCategory>("education");
+  const [collection, setCollection] = useState("");
+  const [keywords, setKeywords] = useState("");
+
+  useEffect(() => {
+    if (!item) return;
+    setTitle(item.title);
+    setSummary(item.aiSummary);
+    setWhySaved(item.whySaved);
+    setCategory(item.category);
+    setCollection(item.collection);
+    setKeywords(item.keywords.join(", "));
+  }, [item]);
+
+  function save() {
+    if (!item) return;
+    if (!title.trim() || !summary.trim()) {
+      Alert.alert("Add a little more context", "A saved thing needs a title and a short summary so Shepherd can find it later.");
+      return;
+    }
+
+    onSave(item.id, {
+      title: title.trim(),
+      aiSummary: summary.trim(),
+      whySaved: whySaved.trim() || "Something you wanted to remember",
+      category,
+      collection: collection.trim() || "Captured by Shepherd",
+      keywords: keywords
+        .split(",")
+        .map((keyword) => keyword.trim())
+        .filter(Boolean)
+    });
+  }
+
+  return (
+    <Modal visible={Boolean(item)} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <View style={styles.editSheet}>
+          <Text style={styles.editKicker}>Tune this memory</Text>
+          <Text style={styles.editTitle}>Make it easier for Shepherd to find later.</Text>
+          <TextInput value={title} onChangeText={setTitle} placeholder="Title" placeholderTextColor={colors.muted} style={styles.editInput} />
+          <TextInput value={summary} onChangeText={setSummary} placeholder="AI summary" placeholderTextColor={colors.muted} multiline style={[styles.editInput, styles.editTextArea]} />
+          <TextInput value={whySaved} onChangeText={setWhySaved} placeholder="Why you saved it" placeholderTextColor={colors.muted} style={styles.editInput} />
+          <TextInput value={collection} onChangeText={setCollection} placeholder="Collection" placeholderTextColor={colors.muted} style={styles.editInput} />
+          <TextInput value={keywords} onChangeText={setKeywords} placeholder="Keywords, separated by commas" placeholderTextColor={colors.muted} style={styles.editInput} />
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.editChips}>
+            {libraryCategories.map((option) => (
+              <LibraryFilterChip key={option} label={categoryLabels[option]} selected={category === option} onPress={() => setCategory(option)} />
+            ))}
+          </ScrollView>
+
+          <View style={styles.editActions}>
+            <Pressable style={styles.cancelButton} onPress={onClose}>
+              <Text style={styles.cancelText}>Cancel</Text>
+            </Pressable>
+            <Pressable style={styles.saveButton} onPress={save}>
+              <Text style={styles.saveText}>Save</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -382,5 +524,74 @@ const styles = StyleSheet.create({
   list: {
     gap: spacing.lg,
     marginTop: spacing.md
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(32, 48, 51, 0.26)",
+    justifyContent: "flex-end",
+    padding: spacing.lg
+  },
+  editSheet: {
+    maxHeight: "88%",
+    borderRadius: radii.xl,
+    backgroundColor: colors.card,
+    padding: spacing.xl,
+    gap: spacing.md,
+    ...shadows.soft
+  },
+  editKicker: {
+    ...typography.label,
+    color: colors.sage
+  },
+  editTitle: {
+    ...typography.subtitle,
+    color: colors.ink
+  },
+  editInput: {
+    minHeight: 52,
+    borderRadius: radii.lg,
+    backgroundColor: colors.cardSoft,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    ...typography.body,
+    color: colors.ink
+  },
+  editTextArea: {
+    minHeight: 96,
+    textAlignVertical: "top"
+  },
+  editChips: {
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingRight: spacing.lg
+  },
+  editActions: {
+    flexDirection: "row",
+    gap: spacing.md,
+    marginTop: spacing.sm
+  },
+  cancelButton: {
+    flex: 1,
+    minHeight: 52,
+    borderRadius: radii.xl,
+    backgroundColor: colors.cardSoft,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  cancelText: {
+    ...typography.button,
+    color: colors.ink
+  },
+  saveButton: {
+    flex: 1,
+    minHeight: 52,
+    borderRadius: radii.xl,
+    backgroundColor: colors.ink,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  saveText: {
+    ...typography.button,
+    color: colors.cream
   }
 });

@@ -1,12 +1,25 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { BookOpen, ChevronRight, Sparkles } from "lucide-react-native";
+import type React from "react";
+import { Archive, BookOpen, Pencil, RotateCcw, Sparkles } from "lucide-react-native";
 import { LibraryItem } from "@/types/domain";
 import { categoryLabels } from "@/features/library/mockLibrary";
 import { colors, radii, shadows, spacing, typography } from "@/lib/theme";
 
-export function LibraryItemCard({ item, onPress }: { item: LibraryItem; onPress?: () => void }) {
+export function LibraryItemCard({
+  item,
+  onEdit,
+  onArchive,
+  onTransform
+}: {
+  item: LibraryItem;
+  onEdit?: () => void;
+  onArchive?: () => void;
+  onTransform?: () => void;
+}) {
+  const isArchived = item.status === "archived";
+
   return (
-    <Pressable style={({ pressed }) => [styles.card, pressed && styles.pressed]} onPress={onPress}>
+    <View style={[styles.card, isArchived && styles.archivedCard]}>
       <View style={styles.iconWrap}>
         <BookOpen color={colors.sage} size={22} />
       </View>
@@ -27,8 +40,35 @@ export function LibraryItemCard({ item, onPress }: { item: LibraryItem; onPress?
         </View>
         <Text style={styles.actionLabel}>Suggested action</Text>
         <Text style={styles.action}>{item.suggestedAction}</Text>
+        <View style={styles.actions}>
+          <ActionButton icon={<Sparkles color={colors.cream} size={16} />} label="Create" primary onPress={onTransform} />
+          <ActionButton icon={<Pencil color={colors.ink} size={16} />} label="Edit" onPress={onEdit} />
+          <ActionButton
+            icon={isArchived ? <RotateCcw color={colors.ink} size={16} /> : <Archive color={colors.ink} size={16} />}
+            label={isArchived ? "Restore" : "Archive"}
+            onPress={onArchive}
+          />
+        </View>
       </View>
-      {onPress ? <ChevronRight color={colors.muted} size={18} /> : null}
+    </View>
+  );
+}
+
+function ActionButton({
+  icon,
+  label,
+  primary,
+  onPress
+}: {
+  icon: React.ReactNode;
+  label: string;
+  primary?: boolean;
+  onPress?: () => void;
+}) {
+  return (
+    <Pressable style={({ pressed }) => [styles.actionButton, primary && styles.actionButtonPrimary, pressed && styles.pressed]} onPress={onPress}>
+      {icon}
+      <Text style={[styles.actionButtonText, primary && styles.actionButtonTextPrimary]}>{label}</Text>
     </Pressable>
   );
 }
@@ -41,6 +81,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.md,
     ...shadows.quiet
+  },
+  archivedCard: {
+    opacity: 0.72
   },
   pressed: {
     opacity: 0.9,
@@ -112,5 +155,30 @@ const styles = StyleSheet.create({
     ...typography.label,
     color: colors.sage,
     marginTop: spacing.xs
+  },
+  actions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    marginTop: spacing.md
+  },
+  actionButton: {
+    minHeight: 38,
+    borderRadius: radii.pill,
+    backgroundColor: colors.cardSoft,
+    paddingHorizontal: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs
+  },
+  actionButtonPrimary: {
+    backgroundColor: colors.ink
+  },
+  actionButtonText: {
+    ...typography.bodySmall,
+    color: colors.ink
+  },
+  actionButtonTextPrimary: {
+    color: colors.cream
   }
 });
