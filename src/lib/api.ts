@@ -1,6 +1,7 @@
 ﻿import { supabase } from "@/lib/supabase";
 import { isDemoMode, isSupabaseConfigured } from "@/lib/supabase";
 import type { MemoryAnswer } from "@/features/memory/askMemory";
+import { transformationForTask, transformationResults } from "@/features/transformation/mockTransformations";
 import { CaptureAction, CapturedContent, LibraryCategory, LibraryItem, LibraryItemUpdate, ShepherdAsset, TransformationResult } from "@/types/domain";
 import * as FileSystem from "expo-file-system";
 import * as ImageManipulator from "expo-image-manipulator";
@@ -62,24 +63,66 @@ export async function applyAction(assetId: string, action: string) {
   }
 }
 
-export async function deleteAnalysis() {
+export type DeleteAnalysisOutcome = { steps: { table: string; status: string }[]; retained: string[] };
+
+export async function deleteAnalysis(): Promise<DeleteAnalysisOutcome | undefined> {
   if (isDemoMode && !isSupabaseConfigured) {
     return;
   }
 
-  const { error } = await supabase.functions.invoke("delete-analysis", {
-    body: {}
-  });
+  const { data, error } = await supabase.functions.invoke<{
+    ok?: boolean;
+    error?: string;
+    steps?: { table: string; status: string }[];
+    retained?: string[];
+  }>("delete-analysis", { body: {} });
 
   if (error) {
-    throw new Error(error.message);
+    // A non-2xx response carries the real reason in the response body, not in error.message.
+    // Surface it so a partial deletion is never presented to the user as a clean success.
+    throw new Error(await readFunctionError(error, "Shepherd could not delete the analysis data."));
   }
+
+  if (data && data.ok === false) {
+    throw new Error(data.error ?? "Shepherd could not delete all of the analysis data.");
+  }
+
+  return { steps: data?.steps ?? [], retained: data?.retained ?? [] };
 }
 
 export async function createTransformation(capture: CapturedContent, action: CaptureAction) {
+  // Demo mode has no reachable backend, so this guard belongs here alongside every other
+  // function in this module. Without it, callers that skip the store hit the Edge Function
+  // with a fabricated demo token and fail.
+  if (isDemoMode && !isSupabaseConfigured) {
+    return createDemoTransformation(capture);
+  }
+
   const { data, error } = await supabase.functions.invoke<{ transformation: TransformationResult }>("transform-capture", { body: { capture, action } });
   if (error || !data?.transformation) throw new Error(error?.message ?? "Shepherd could not create this yet.");
   return data.transformation;
+}
+
+export function createDemoTransformation(capture: CapturedContent): TransformationResult {
+  return {
+    ...transformationResults[transformationForTask(capture.suggestedShepherdId)],
+    id: `demo-${capture.id}`
+  };
+}
+
+/** Reads the JSON body of a failed Edge Function response so the real cause reaches the user. */
+async function readFunctionError(error: unknown, fallback: string): Promise<string> {
+  const context = (error as { context?: unknown }).context;
+  if (context && typeof (context as Response).json === "function") {
+    try {
+      const body = await (context as Response).json();
+      if (body?.error) return String(body.error);
+    } catch {
+      // Body was not JSON; fall through to the generic message below.
+    }
+  }
+  const message = (error as { message?: string }).message;
+  return message || fallback;
 }
 
 export async function createTransformationFromLibraryItem(item: LibraryItem, action: CaptureAction = "create_action_item") {
