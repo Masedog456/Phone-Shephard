@@ -1,5 +1,6 @@
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireUser } from "../_shared/auth.ts";
+import { rankItems as rankItemsShared, tokenize } from "../_shared/memoryRanking.ts";
 
 type LibraryItem = {
   id: string;
@@ -14,7 +15,18 @@ type LibraryItem = {
   keywords?: string[] | null;
   captured_at: string;
   status?: string | null;
+  // Source Intake V1: provenance-bearing fields. Each has a different author and must stay
+  // distinguishable all the way through retrieval and into the answer.
+  extracted_text?: string | null; // authored by the external source
+  user_note?: string | null; // authored by the person
+  source_url?: string | null;
+  canonical_url?: string | null;
+  published_at?: string | null;
+  extraction_status?: string | null;
 };
+
+/** How much source text is handed to the model per item, to bound context cost. */
+const CONTEXT_TEXT_LIMIT = 1500;
 
 type MemoryIntent = {
   id: string;
@@ -50,7 +62,9 @@ Deno.serve(async (req) => {
 
     const { data: items, error } = await userClient
       .from("library_items")
-      .select("id, source, content_type, title, creator, summary, why_saved, category, collection_name, keywords, captured_at, status")
+      .select(
+        "id, source, content_type, title, creator, summary, why_saved, category, collection_name, keywords, captured_at, status, extracted_text, user_note, source_url, canonical_url, published_at, extraction_status"
+      )
       .eq("status", "active")
       .order("captured_at", { ascending: false })
       .limit(200);
@@ -107,18 +121,30 @@ async function createMemoryAnswer(question: string, items: LibraryItem[]): Promi
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return fallbackAnswer(question, items);
 
+  // Fields are grouped by WHO AUTHORED THEM so the model can attribute claims correctly and
+  // never present its own words, or the user's, as something the source said.
   const memoryContext = items.map((item) => ({
     id: item.id,
     title: item.title,
     source: item.source,
     type: item.content_type,
     creator: item.creator,
-    summary: item.summary,
-    whySaved: item.why_saved,
     category: item.category,
     collection: item.collection_name,
     keywords: item.keywords ?? [],
-    capturedAt: item.captured_at
+    capturedAt: item.captured_at,
+    fromTheSource: item.extracted_text
+      ? {
+          text: item.extracted_text.slice(0, CONTEXT_TEXT_LIMIT),
+          truncated: item.extracted_text.length > CONTEXT_TEXT_LIMIT,
+          url: item.canonical_url ?? item.source_url,
+          publishedAt: item.published_at,
+          extraction: item.extraction_status
+        }
+      : null,
+    fromTheUser: item.user_note ?? null,
+    fromShepherdAI: item.summary || null,
+    whySaved: item.why_saved
   }));
 
   const response = await fetch("https://api.openai.com/v1/responses", {
@@ -131,6 +157,7 @@ async function createMemoryAnswer(question: string, items: LibraryItem[]): Promi
       model: Deno.env.get("OPENAI_MEMORY_MODEL") ?? Deno.env.get("OPENAI_TRANSFORMATION_MODEL") ?? "gpt-4.1-mini",
       input:
         "You are Phone Shepherd, a calm private digital caretaker. Answer only from the provided library items. Do not invent saved items, links, dates, sources, or creators. If the items do not answer the question directly, say so gently and mention the closest relevant saved things. Keep the tone warm, concise, and useful.\n\n" +
+        "Each item separates who authored what. 'fromTheSource' is text from the external page itself — quote or paraphrase it when the user asks what something said, and say which source it came from. 'fromTheUser' is the person's own note or reflection; attribute it to them and never treat it as a fact from the source. 'fromShepherdAI' is your own earlier summary; treat it as a hint, never as evidence, and never present it as something the source said. If 'truncated' is true you are seeing only the beginning of the source text, so do not claim the source omits something.\n\n" +
         `User question: ${question}\n\nRelevant private library items:\n${JSON.stringify(memoryContext)}`,
       text: {
         format: {
@@ -183,37 +210,7 @@ async function createMemoryAnswer(question: string, items: LibraryItem[]): Promi
 }
 
 function rankItems(question: string, items: LibraryItem[]) {
-  const words = tokenize(question);
-  const categoryHint = categoryFromQuestion(question);
-
-  return items
-    .map((item) => {
-      const haystack = [
-        item.title,
-        item.summary,
-        item.why_saved,
-        item.source,
-        item.content_type,
-        item.creator,
-        item.category,
-        item.collection_name,
-        ...(item.keywords ?? [])
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      const wordHits = words.filter((word) => haystack.includes(word)).length;
-      const titleHits = words.filter((word) => item.title.toLowerCase().includes(word)).length;
-      const keywordHits = words.filter((word) => (item.keywords ?? []).join(" ").toLowerCase().includes(word)).length;
-      const categoryBoost = categoryHint && normalizeCategory(item.category) === categoryHint ? 4 : 0;
-
-      return {
-        item,
-        score: wordHits + titleHits * 2 + keywordHits * 2 + categoryBoost
-      };
-    })
-    .sort((a, b) => b.score - a.score || Date.parse(b.item.captured_at) - Date.parse(a.item.captured_at));
+  return rankItemsShared(question, items, categoryFromQuestion(question), normalizeCategory);
 }
 
 function fallbackAnswer(question: string, items: LibraryItem[]): MemoryAnswer {
@@ -270,19 +267,6 @@ function followUpsForItems(items: LibraryItem[]) {
 function defaultFollowUps(items: LibraryItem[]) {
   const categories = Array.from(new Set(items.map((item) => normalizeCategory(item.category)))).slice(0, 3);
   return categories.length ? categories.map((category) => `Show my ${labelForCategory(category)}`) : ["Show recent saves", "Find recipes", "Find business ideas"];
-}
-
-function tokenize(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((word) => word.length > 2)
-    .map((word) => {
-      if (word.endsWith("ies")) return `${word.slice(0, -3)}y`;
-      if (word.endsWith("s") && word.length > 4) return word.slice(0, -1);
-      return word;
-    });
 }
 
 function categoryFromQuestion(question: string) {
