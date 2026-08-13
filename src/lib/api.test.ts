@@ -120,3 +120,79 @@ describe("createTransformationFromLibraryItem", () => {
     expect(result.id).toBe("server-2");
   });
 });
+
+describe("ingestUrl", () => {
+  it("refuses in the default demo configuration rather than pretending to fetch", async () => {
+    const { ingestUrl } = require("@/lib/api");
+    await expect(ingestUrl("https://x.example/a")).rejects.toThrow(/private account/i);
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it("returns the mapped source when the function succeeds", async () => {
+    mockConfig.isDemoMode = false;
+    mockConfig.isSupabaseConfigured = true;
+    mockInvoke.mockResolvedValue({
+      data: {
+        ok: true,
+        item: {
+          id: "src-1",
+          title: "How to Braise Anything",
+          source: "slowkitchen.example",
+          content_type: "website",
+          extracted_text: "collagen melts into gelatin",
+          user_note: "try this",
+          summary: "",
+          canonical_url: "https://slowkitchen.example/braise",
+          extraction_status: "extracted",
+          captured_at: "2026-08-01T10:00:00.000Z"
+        },
+        duplicateStatus: "new",
+        extractionStatus: "extracted",
+        wordCount: 300
+      },
+      error: null
+    });
+
+    const { ingestUrl } = require("@/lib/api");
+    const result = await ingestUrl("https://slowkitchen.example/braise", "try this");
+
+    expect(mockInvoke).toHaveBeenCalledWith("ingest-url", { body: { url: "https://slowkitchen.example/braise", note: "try this" } });
+    // The four provenance channels stay separate through the mapping.
+    expect(result.item.extractedText).toBe("collagen melts into gelatin");
+    expect(result.item.userNote).toBe("try this");
+    expect(result.item.aiSummary).toBe("");
+    expect(result.item.canonicalUrl).toBe("https://slowkitchen.example/braise");
+    expect(result.duplicateStatus).toBe("new");
+  });
+
+  it("surfaces the server's reason and retryability on failure", async () => {
+    mockConfig.isDemoMode = false;
+    mockConfig.isSupabaseConfigured = true;
+    mockInvoke.mockResolvedValue({
+      data: { ok: false, reason: "http_error", message: "That page needs a login.", retryable: false, itemId: "src-9" },
+      error: null
+    });
+
+    const { ingestUrl } = require("@/lib/api");
+    await expect(ingestUrl("https://paywall.example/a")).rejects.toMatchObject({
+      message: "That page needs a login.",
+      reason: "http_error",
+      retryable: false,
+      itemId: "src-9"
+    });
+  });
+
+  it("never fabricates an AI summary from source text", async () => {
+    mockConfig.isDemoMode = false;
+    mockConfig.isSupabaseConfigured = true;
+    mockInvoke.mockResolvedValue({
+      data: { ok: true, item: { id: "s", title: "T", extracted_text: "source words", summary: "" }, duplicateStatus: "new" },
+      error: null
+    });
+
+    const { ingestUrl } = require("@/lib/api");
+    const result = await ingestUrl("https://x.example/a");
+    expect(result.item.aiSummary).toBe("");
+    expect(result.item.aiSummary).not.toBe(result.item.extractedText);
+  });
+});

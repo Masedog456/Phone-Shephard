@@ -4,6 +4,8 @@ import { useState } from "react";
 import {
   ArrowLeft,
   AtSign,
+  ChevronRight,
+  Globe,
   Compass,
   FileText,
   Files,
@@ -69,6 +71,18 @@ export default function CaptureScreen() {
           Share it to Phone Shepherd, and I will understand what it is, why it may matter, and where it belongs.
         </Text>
       </View>
+
+      <Pressable style={({ pressed }) => [styles.linkCard, pressed && styles.pressed]} onPress={() => router.push("/capture/url")}>
+        <View style={styles.linkIcon}>
+          <Globe color={colors.sage} size={24} />
+        </View>
+        <View style={styles.linkCopy}>
+          <Text style={styles.linkKicker}>Save a link</Text>
+          <Text style={styles.linkTitle}>Keep a web page, not just its address.</Text>
+          <Text style={styles.linkText}>Shepherd opens the page and keeps its words, its author, and where they came from.</Text>
+        </View>
+        <ChevronRight color={colors.muted} size={18} />
+      </Pressable>
 
       <View style={styles.nativeShareCard}>
         <Text style={styles.nativeTitle}>Native sharing preview</Text>
@@ -197,6 +211,28 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.subtle
   },
+  linkCard: {
+    borderRadius: radii.xl,
+    backgroundColor: colors.card,
+    padding: spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    marginTop: spacing.xl,
+    ...shadows.soft
+  },
+  linkIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 21,
+    backgroundColor: colors.mist,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  linkCopy: { flex: 1, gap: spacing.xs },
+  linkKicker: { ...typography.label, color: colors.sage },
+  linkTitle: { ...typography.cardTitle, color: colors.ink },
+  linkText: { ...typography.bodySmall, color: colors.subtle },
   nativeShareCard: {
     borderRadius: radii.xl,
     backgroundColor: colors.ink,

@@ -23,6 +23,8 @@ function RootNavigator() {
         <Stack.Screen name="session/index" options={{ presentation: "modal" }} />
         <Stack.Screen name="capture/index" options={{ presentation: "modal" }} />
         <Stack.Screen name="capture/[id]" options={{ presentation: "modal" }} />
+        <Stack.Screen name="capture/url" options={{ presentation: "modal" }} />
+        <Stack.Screen name="source/[id]" options={{ presentation: "modal" }} />
         <Stack.Screen name="dots/index" options={{ presentation: "modal" }} />
         <Stack.Screen name="timeline/index" options={{ presentation: "modal" }} />
         <Stack.Screen name="transformation/[id]" options={{ presentation: "modal" }} />

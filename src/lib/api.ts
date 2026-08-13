@@ -2,7 +2,17 @@
 import { isDemoMode, isSupabaseConfigured } from "@/lib/supabase";
 import type { MemoryAnswer } from "@/features/memory/askMemory";
 import { transformationForTask, transformationResults } from "@/features/transformation/mockTransformations";
-import { CaptureAction, CapturedContent, LibraryCategory, LibraryItem, LibraryItemUpdate, ShepherdAsset, TransformationResult } from "@/types/domain";
+import {
+  CaptureAction,
+  CapturedContent,
+  DuplicateStatus,
+  LibraryCategory,
+  LibraryItem,
+  LibraryItemUpdate,
+  ShepherdAsset,
+  TransformationResult,
+  UrlIngestResult
+} from "@/types/domain";
 import * as FileSystem from "expo-file-system";
 import * as ImageManipulator from "expo-image-manipulator";
 
@@ -147,6 +157,78 @@ export async function fetchTransformation(id: string): Promise<TransformationRes
   return data ? mapTransformation(data) : null;
 }
 
+/**
+ * Submits a URL for server-side fetch and extraction.
+ *
+ * Throws a UrlIngestError-shaped error on failure so callers can distinguish a page that
+ * refused to be read (paywall, block, timeout) from a genuine server fault, and can offer a
+ * retry where the server says one is worthwhile.
+ */
+export async function ingestUrl(url: string, note?: string): Promise<UrlIngestResult> {
+  if (isDemoMode && !isSupabaseConfigured) {
+    throw Object.assign(new Error("Saving real links needs Phone Shepherd connected to your private account."), {
+      reason: "demo_mode",
+      retryable: false,
+      itemId: null
+    });
+  }
+
+  const { data, error } = await supabase.functions.invoke<{
+    ok?: boolean;
+    item?: Record<string, unknown>;
+    duplicateStatus?: DuplicateStatus;
+    duplicateOfId?: string | null;
+    extractionStatus?: "extracted" | "partial";
+    wordCount?: number;
+    reason?: string;
+    message?: string;
+    retryable?: boolean;
+    itemId?: string | null;
+  }>("ingest-url", { body: { url, note } });
+
+  if (error) {
+    const body = await readFunctionErrorBody(error);
+    throw Object.assign(new Error(body?.message ?? "Shepherd could not open that link."), {
+      reason: body?.reason ?? "network_error",
+      retryable: body?.retryable ?? true,
+      itemId: body?.itemId ?? null
+    });
+  }
+
+  if (!data?.ok || !data.item) {
+    throw Object.assign(new Error(data?.message ?? "Shepherd could not open that link."), {
+      reason: data?.reason ?? "unknown",
+      retryable: data?.retryable ?? false,
+      itemId: data?.itemId ?? null
+    });
+  }
+
+  return {
+    item: mapLibraryRow(data.item),
+    duplicateStatus: data.duplicateStatus ?? "new",
+    duplicateOfId: data.duplicateOfId ?? null,
+    extractionStatus: data.extractionStatus ?? "extracted",
+    wordCount: data.wordCount ?? 0
+  };
+}
+
+/** Saves the person's own note. Deliberately separate from anything AI writes. */
+export async function saveUserNote(id: string, note: string): Promise<void> {
+  if (isDemoMode && !isSupabaseConfigured) return;
+  const { error } = await supabase.from("library_items").update({ user_note: note }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+const LIBRARY_COLUMNS =
+  "id, source, content_type, title, creator, source_url, canonical_url, summary, why_saved, category, collection_name, keywords, captured_at, status, extracted_text, user_note, extraction_status, extraction_reason, published_at, fetched_at";
+
+export async function fetchLibraryItem(id: string): Promise<LibraryItem | null> {
+  if (isDemoMode && !isSupabaseConfigured) return null;
+  const { data, error } = await supabase.from("library_items").select(LIBRARY_COLUMNS).eq("id", id).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? mapLibraryRow(data as Record<string, unknown>) : null;
+}
+
 export async function fetchLibraryItems(): Promise<LibraryItem[]> {
   if (isDemoMode && !isSupabaseConfigured) {
     return [];
@@ -154,30 +236,64 @@ export async function fetchLibraryItems(): Promise<LibraryItem[]> {
 
   const { data, error } = await supabase
     .from("library_items")
-    .select("id, source, content_type, title, creator, source_url, summary, why_saved, category, collection_name, keywords, captured_at, status")
+    .select(LIBRARY_COLUMNS)
     .order("captured_at", { ascending: false });
 
   if (error) {
     throw new Error(error.message);
   }
 
-  return (data ?? []).map((item) => ({
-    id: item.id,
-    source: item.source,
-    contentType: item.content_type,
-    type: humanizeContentType(item.content_type),
-    title: item.title,
-    aiSummary: item.summary || "Shepherd saved this with its context intact.",
-    whySaved: item.why_saved || "Something you wanted to remember",
-    suggestedAction: suggestedActionForCategory(item.category),
-    category: normalizeLibraryCategory(item.category),
-    collection: item.collection_name || "Captured by Shepherd",
-    creator: item.creator ?? undefined,
-    sourceUrl: item.source_url ?? undefined,
-    capturedAt: item.captured_at,
-    keywords: item.keywords ?? [],
-    status: item.status === "archived" ? "archived" : "active"
-  }));
+  return (data ?? []).map((item) => mapLibraryRow(item as Record<string, unknown>));
+}
+
+/**
+ * Maps a library_items row into the domain model, keeping the four provenance channels apart:
+ * extracted_text (the source), summary (AI), user_note (the person), and the rest (metadata).
+ */
+function mapLibraryRow(item: Record<string, unknown>): LibraryItem {
+  const str = (key: string) => (typeof item[key] === "string" && item[key] ? (item[key] as string) : undefined);
+  const extractionStatus = str("extraction_status") as LibraryItem["extractionStatus"];
+
+  return {
+    id: String(item.id ?? ""),
+    source: str("source") ?? "Shepherd",
+    contentType: str("content_type"),
+    type: humanizeContentType(str("content_type") ?? "document"),
+    title: str("title") ?? "Untitled",
+    // Never fall back to source text here: an empty AI summary must read as "not summarised yet".
+    aiSummary: str("summary") ?? "",
+    whySaved: str("why_saved") ?? "",
+    suggestedAction: suggestedActionForCategory(str("category")),
+    category: normalizeLibraryCategory(str("category")),
+    collection: str("collection_name") ?? "Captured by Shepherd",
+    creator: str("creator"),
+    sourceUrl: str("source_url"),
+    canonicalUrl: str("canonical_url"),
+    capturedAt: str("captured_at") ?? new Date().toISOString(),
+    keywords: Array.isArray(item.keywords) ? (item.keywords as string[]) : [],
+    status: item.status === "archived" ? "archived" : "active",
+    extractedText: str("extracted_text"),
+    userNote: str("user_note"),
+    publishedAt: str("published_at"),
+    fetchedAt: str("fetched_at"),
+    extractionStatus,
+    extractionReason: str("extraction_reason")
+  };
+}
+
+/** Reads the JSON body of a failed Edge Function response. */
+async function readFunctionErrorBody(
+  error: unknown
+): Promise<{ reason?: string; message?: string; retryable?: boolean; itemId?: string | null } | null> {
+  const context = (error as { context?: unknown }).context;
+  if (context && typeof (context as Response).json === "function") {
+    try {
+      return await (context as Response).json();
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 export async function updateLibraryItem(id: string, update: LibraryItemUpdate): Promise<void> {
