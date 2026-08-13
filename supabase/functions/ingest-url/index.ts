@@ -1,6 +1,7 @@
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireUser } from "../_shared/auth.ts";
 import { ingestUrl } from "../_shared/ingestUrlCore.ts";
+import { indexLibraryItem } from "../_shared/libraryIndexer.ts";
 
 const MAX_NOTE_LENGTH = 2000;
 
@@ -49,9 +50,41 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Persistence already succeeded. Indexing is a separate, best-effort step: a failure here is
+    // reported but never turns a successful capture into a failed one.
+    let indexed = false;
+    const itemId = typeof outcome.item.id === "string" ? outcome.item.id : null;
+    if (itemId) {
+      const item = outcome.item as Record<string, unknown>;
+      const indexOutcome = await indexLibraryItem(
+        adminClient as never,
+        user.id,
+        {
+          id: itemId,
+          title: item.title as string | null,
+          source: item.source as string | null,
+          content_type: item.content_type as string | null,
+          creator: item.creator as string | null,
+          keywords: item.keywords as string[] | null,
+          extracted_text: item.extracted_text as string | null,
+          user_note: item.user_note as string | null,
+          summary: item.summary as string | null
+        },
+        {
+          apiKey: Deno.env.get("OPENAI_API_KEY"),
+          model: Deno.env.get("OPENAI_EMBEDDING_MODEL")
+        }
+      );
+      indexed = indexOutcome.ok && indexOutcome.status === "indexed";
+      if (!indexOutcome.ok) {
+        console.error("ingest-url indexing failed", user.id, itemId, indexOutcome.reason);
+      }
+    }
+
     return jsonResponse({
       ok: true,
       item: outcome.item,
+      semanticallyIndexed: indexed,
       duplicateStatus: outcome.duplicateStatus,
       duplicateOfId: outcome.duplicateOfId,
       extractionStatus: outcome.extractionStatus,
