@@ -1,5 +1,6 @@
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireUser } from "../_shared/auth.ts";
+import { deleteScreenshotAnalysis } from "../_shared/deleteScreenshotAnalysis.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -9,12 +10,25 @@ Deno.serve(async (req) => {
   try {
     const { user, adminClient } = await requireUser(req);
 
-    await adminClient.from("asset_embeddings").delete().eq("user_id", user.id);
-    await adminClient.from("asset_ai_analysis").delete().eq("user_id", user.id);
-    await adminClient.from("media_assets").update({ is_sensitive: false }).eq("user_id", user.id);
+    const outcome = await deleteScreenshotAnalysis(adminClient, user.id);
 
-    return jsonResponse({ ok: true });
+    if (!outcome.ok) {
+      console.error("delete-analysis incomplete", user.id, outcome.error, outcome.steps);
+      // A partial deletion is a failure, not a success. Reporting ok:true here would tell the
+      // user their analysis was removed while some of it is still stored.
+      return jsonResponse(
+        {
+          ok: false,
+          error: outcome.error ?? "Some analysis data could not be deleted.",
+          steps: outcome.steps,
+          retained: outcome.retained
+        },
+        500
+      );
+    }
+
+    return jsonResponse({ ok: true, steps: outcome.steps, retained: outcome.retained });
   } catch (error) {
-    return jsonResponse({ error: error instanceof Error ? error.message : "Unknown error" }, 500);
+    return jsonResponse({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }, 500);
   }
 });

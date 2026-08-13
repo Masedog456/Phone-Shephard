@@ -1,9 +1,16 @@
 import { create } from "zustand";
-import { createTransformation, fetchTransformation, saveTransformation, scheduleTransformationReminder, submitTransformationFeedback } from "@/lib/api";
+import {
+  createTransformation,
+  createTransformationFromLibraryItem,
+  fetchTransformation,
+  saveTransformation,
+  scheduleTransformationReminder,
+  submitTransformationFeedback
+} from "@/lib/api";
 import { useLibraryItems } from "@/features/library/useLibraryItems";
 import { isDemoMode, isSupabaseConfigured } from "@/lib/supabase";
-import { CaptureAction, CapturedContent, TransformationResult } from "@/types/domain";
-import { transformationForTask, transformationResults } from "@/features/transformation/mockTransformations";
+import { CaptureAction, CapturedContent, LibraryItem, TransformationResult } from "@/types/domain";
+import { transformationResults } from "@/features/transformation/mockTransformations";
 
 type Store = {
   results: Record<string, TransformationResult>;
@@ -12,6 +19,7 @@ type Store = {
   error: string | null;
   loadById: (id: string) => Promise<TransformationResult | null>;
   createFromCapture: (capture: CapturedContent, action: CaptureAction) => Promise<TransformationResult>;
+  createFromLibraryItem: (item: LibraryItem, action?: CaptureAction) => Promise<TransformationResult>;
   save: (id: string) => Promise<void>;
   remind: (id: string, message: string) => Promise<void>;
   feedback: (id: string, rating: "useful" | "not_useful" | "wrong_category") => Promise<void>;
@@ -42,12 +50,24 @@ export const useTransformations = create<Store>((set, get) => ({
       throw new Error(message);
     }
   },
+  // Demo handling now lives in the API layer alongside every other call, so this store no
+  // longer branches on it. Both creation paths funnel through here so the result is always
+  // cached for the transformation screen and the Library is always refreshed.
   createFromCapture: async (capture, action) => {
     set({ isCreating: true });
     try {
-      const result = isDemoMode && !isSupabaseConfigured
-        ? { ...transformationResults[transformationForTask(capture.suggestedShepherdId)], id: `demo-${capture.id}` }
-        : await createTransformation(capture, action);
+      const result = await createTransformation(capture, action);
+      set((state) => ({ results: { ...state.results, [result.id]: result } }));
+      void useLibraryItems.getState().refresh();
+      return result;
+    } finally {
+      set({ isCreating: false });
+    }
+  },
+  createFromLibraryItem: async (item, action = "create_action_item") => {
+    set({ isCreating: true });
+    try {
+      const result = await createTransformationFromLibraryItem(item, action);
       set((state) => ({ results: { ...state.results, [result.id]: result } }));
       void useLibraryItems.getState().refresh();
       return result;

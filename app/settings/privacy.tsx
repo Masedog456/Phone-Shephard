@@ -50,21 +50,47 @@ export default function PrivacyScreen() {
         <SettingRow title="Gentle reset reminders" body="A quiet nudge when saved things may need your eyes." enabled={settings.reminders} onChange={(value) => updateSetting("reminders", value)} />
       </View>
 
-      <Pressable
-        style={styles.deleteButton}
-        onPress={() => {
-          Alert.alert("Ask Shepherd to forget?", "This removes stored summaries, memory links, and analysis notes.", [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Delete",
-              style: "destructive",
-              onPress: () => deleteAnalysis().catch((error) => Alert.alert("Shepherd could not forget yet", error.message))
-            }
-          ]);
-        }}
-      >
-        <Text style={styles.deleteText}>Delete AI analysis data</Text>
-      </Pressable>
+      <View style={styles.deleteBlock}>
+        <Pressable
+          style={styles.deleteButton}
+          onPress={() => {
+            Alert.alert(
+              "Delete screenshot analysis?",
+              "This removes what Shepherd worked out about your screenshots: the summaries, categories, sensitivity flags, and the search index built from them.\n\nYour screenshots stay on your phone. Your Library, the things Shepherd created, and your reminders are not affected.",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Delete analysis",
+                  style: "destructive",
+                  onPress: () => {
+                    deleteAnalysis()
+                      .then(() =>
+                        Alert.alert(
+                          "Screenshot analysis deleted",
+                          "Shepherd forgot what it worked out about your screenshots. Your screenshots and your Library are untouched."
+                        )
+                      )
+                      .catch((error) =>
+                        // Partial deletion reaches this branch with a specific message, so the
+                        // user is never told data is gone while some of it remains.
+                        Alert.alert(
+                          "Shepherd could not finish deleting",
+                          error instanceof Error ? error.message : "Some analysis data may still be stored. Please try again."
+                        )
+                      );
+                  }
+                }
+              ]
+            );
+          }}
+        >
+          <Text style={styles.deleteText}>Delete screenshot AI analysis</Text>
+        </Pressable>
+        <Text style={styles.deleteNote}>
+          Your screenshots, Library items, and saved creations are kept. This only removes the analysis Shepherd derived from your
+          screenshots.
+        </Text>
+      </View>
     </Screen>
   );
 }
@@ -149,14 +175,22 @@ const styles = StyleSheet.create({
     ...typography.bodySmall,
     color: colors.subtle
   },
+  deleteBlock: {
+    marginTop: spacing.xl,
+    gap: spacing.sm
+  },
   deleteButton: {
     height: 54,
     borderRadius: radii.xl,
     backgroundColor: colors.warningSoft,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: spacing.xl,
     ...shadows.quiet
+  },
+  deleteNote: {
+    ...typography.bodySmall,
+    color: colors.subtle,
+    paddingHorizontal: spacing.xs
   },
   deleteText: {
     ...typography.button,

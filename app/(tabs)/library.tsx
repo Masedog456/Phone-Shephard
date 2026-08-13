@@ -14,7 +14,7 @@ import {
   libraryCategories,
 } from "@/features/library/mockLibrary";
 import { useLibraryItems } from "@/features/library/useLibraryItems";
-import { createTransformationFromLibraryItem } from "@/lib/api";
+import { useTransformations } from "@/features/transformation/useTransformations";
 import { LibraryCategory, LibraryItem, LibraryItemUpdate } from "@/types/domain";
 import { colors, radii, shadows, spacing, typography } from "@/lib/theme";
 
@@ -27,6 +27,7 @@ export default function LibraryScreen() {
   const [showArchived, setShowArchived] = useState(false);
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
   const { items, isLoading, error, refresh, updateItem, archiveItem } = useLibraryItems();
+  const createFromLibraryItem = useTransformations((state) => state.createFromLibraryItem);
   const [transformingItemId, setTransformingItemId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -94,7 +95,7 @@ export default function LibraryScreen() {
   async function handleTransformItem(item: LibraryItem) {
     setTransformingItemId(item.id);
     try {
-      const result = await createTransformationFromLibraryItem(item);
+      const result = await createFromLibraryItem(item);
       Vibration.vibrate(8);
       router.push(`/transformation/${result.id}`);
     } catch (transformError) {

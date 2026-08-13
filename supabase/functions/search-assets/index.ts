@@ -1,5 +1,6 @@
 ﻿import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireUser } from "../_shared/auth.ts";
+import { createEmbedding } from "../_shared/embedding.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -14,9 +15,27 @@ Deno.serve(async (req) => {
       return jsonResponse({ assets: [] });
     }
 
-    const embedding = await createEmbedding(query);
+    // Searching with a fabricated vector returns arbitrary rows that look like real matches.
+    // Fail explicitly instead, so the caller can retry rather than trust a meaningless result.
+    const embeddingResult = await createEmbedding(query, {
+      apiKey: Deno.env.get("OPENAI_API_KEY"),
+      model: Deno.env.get("OPENAI_EMBEDDING_MODEL")
+    });
+
+    if (!embeddingResult.ok) {
+      console.error("Search embedding failed", embeddingResult.reason, embeddingResult.message);
+      return jsonResponse(
+        {
+          error: "Semantic search is unavailable right now. Your saved things are safe — please try again.",
+          reason: embeddingResult.reason,
+          retryable: true
+        },
+        503
+      );
+    }
+
     const { data, error } = await userClient.rpc("search_assets", {
-      query_embedding: embedding,
+      query_embedding: embeddingResult.embedding,
       match_count: 20,
       filter_category: null
     });
@@ -64,30 +83,4 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: error instanceof Error ? error.message : "Unknown error" }, 500);
   }
 });
-
-async function createEmbedding(text: string) {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) {
-    return new Array(1536).fill(0);
-  }
-
-  const response = await fetch("https://api.openai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: Deno.env.get("OPENAI_EMBEDDING_MODEL") ?? "text-embedding-3-small",
-      input: text
-    })
-  });
-
-  if (!response.ok) {
-    return new Array(1536).fill(0);
-  }
-
-  const json = await response.json();
-  return json.data[0].embedding;
-}
 
