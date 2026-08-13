@@ -142,12 +142,17 @@ export type LibraryCategory =
   | "education"
   | "entertainment";
 
+export type ExtractionStatus = "not_applicable" | "pending" | "extracted" | "partial" | "failed";
+
+export type DuplicateStatus = "new" | "identical" | "content_changed" | "same_content_different_url";
+
 export type LibraryItem = {
   id: string;
   source: string;
   contentType?: string;
   type: string;
   title: string;
+  /** AI-generated. Never source text, never the user's words. */
   aiSummary: string;
   whySaved: string;
   suggestedAction: string;
@@ -158,6 +163,30 @@ export type LibraryItem = {
   capturedAt: string;
   keywords: string[];
   status?: "active" | "archived";
+  /** Authored by the external source. */
+  extractedText?: string;
+  /** Authored by the person. */
+  userNote?: string;
+  canonicalUrl?: string;
+  publishedAt?: string;
+  fetchedAt?: string;
+  extractionStatus?: ExtractionStatus;
+  extractionReason?: string;
+};
+
+export type UrlIngestResult = {
+  item: LibraryItem;
+  duplicateStatus: DuplicateStatus;
+  duplicateOfId: string | null;
+  extractionStatus: "extracted" | "partial";
+  wordCount: number;
+};
+
+export type UrlIngestError = {
+  reason: string;
+  message: string;
+  retryable: boolean;
+  itemId: string | null;
 };
 
 export type LibraryItemUpdate = {
