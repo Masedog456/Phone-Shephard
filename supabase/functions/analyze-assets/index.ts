@@ -1,5 +1,6 @@
 ﻿import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireUser } from "../_shared/auth.ts";
+import { createEmbedding } from "../_shared/embedding.ts";
 
 type InputAsset = {
   id: string;
@@ -41,6 +42,7 @@ Deno.serve(async (req) => {
     }
 
     const analyzed = [];
+    let embeddingFailures = 0;
 
     for (const asset of assets.slice(0, MAX_ASSETS_PER_REQUEST)) {
       if (asset.dataUrl && asset.dataUrl.length > MAX_DATA_URL_LENGTH) {
@@ -95,13 +97,35 @@ Deno.serve(async (req) => {
         asset.filename ?? ""
       ].join("\n");
 
-      const embedding = await createEmbedding(searchText);
-      await adminClient.from("asset_embeddings").upsert({
-        asset_id: mediaAsset.id,
-        user_id: user.id,
-        embedding,
-        search_text: searchText
+      // Semantic indexing is optional. The asset and its analysis are already persisted above,
+      // so an embedding failure must not lose the capture and must not write a placeholder
+      // vector. Leaving the asset_embeddings row absent is what makes a later retry possible.
+      const embeddingResult = await createEmbedding(searchText, {
+        apiKey: Deno.env.get("OPENAI_API_KEY"),
+        model: Deno.env.get("OPENAI_EMBEDDING_MODEL")
       });
+
+      let embeddingIndexed = false;
+      if (embeddingResult.ok) {
+        const { error: embeddingError } = await adminClient.from("asset_embeddings").upsert({
+          asset_id: mediaAsset.id,
+          user_id: user.id,
+          embedding: embeddingResult.embedding,
+          search_text: searchText
+        });
+
+        if (embeddingError) {
+          console.error("Embedding persistence failed", mediaAsset.id, embeddingError.message);
+        } else {
+          embeddingIndexed = true;
+        }
+      } else {
+        console.error("Embedding generation failed", mediaAsset.id, embeddingResult.reason, embeddingResult.message);
+      }
+
+      if (!embeddingIndexed) {
+        embeddingFailures += 1;
+      }
 
       analyzed.push({
         ...asset,
@@ -111,11 +135,19 @@ Deno.serve(async (req) => {
         reason: analysis.reason,
         suggestedAction: analysis.suggested_action,
         isSensitive: analysis.contains_credentials || analysis.contains_financial_info,
-        status: analysis.suggested_action === "delete" ? "active" : "active"
+        status: analysis.suggested_action === "delete" ? "active" : "active",
+        // Lets the client tell "not searchable yet" apart from "analysed and indexed".
+        embeddingIndexed
       });
     }
 
-    return jsonResponse({ assets: analyzed });
+    return jsonResponse({
+      assets: analyzed,
+      embeddingFailures,
+      // Analysis succeeded even when indexing did not; the client should not treat this as a
+      // failed scan, but the flag makes the degraded state diagnosable instead of invisible.
+      semanticIndexComplete: embeddingFailures === 0
+    });
   } catch (error) {
     return jsonResponse({ error: error instanceof Error ? error.message : "Unknown error" }, 500);
   }
@@ -204,34 +236,6 @@ async function analyzeImage(asset: InputAsset): Promise<Analysis> {
   const json = await response.json();
   const outputText = json.output_text ?? json.output?.[0]?.content?.find((item: { type: string }) => item.type === "output_text")?.text;
   return normalizeAnalysis(JSON.parse(outputText) as Partial<Analysis>);
-}
-
-async function createEmbedding(text: string) {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) {
-    return new Array(1536).fill(0);
-  }
-
-  const response = await fetch("https://api.openai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: Deno.env.get("OPENAI_EMBEDDING_MODEL") ?? "text-embedding-3-small",
-      input: text
-    })
-  });
-
-  if (!response.ok) {
-    const message = await response.text();
-    console.error("OpenAI embedding failed", response.status, message);
-    return new Array(1536).fill(0);
-  }
-
-  const json = await response.json();
-  return json.data[0].embedding;
 }
 
 function normalizeAnalysis(analysis: Partial<Analysis>): Analysis {
